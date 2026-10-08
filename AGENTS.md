@@ -24,3 +24,9 @@ For new features:
 6. Repeat.
 
 Do not attempt to complete the entire planned system in a single change unless explicitly requested.
+
+### Project Extension Reference
+
+- Create and maintain a single project extension reference file at `docs/PROJECT_EXTENSION.md`.
+- After every implementation, update this file with the information needed to extend the project, including relevant endpoints, class names, module or file locations, and key integration points.
+- Keep the reference concise, current, and organized so future implementations can quickly identify the existing extension surfaces.
