@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CATALOG_USER_AGENT, CatalogError, createCatalogAdapter, toCatalogCandidate } from "../src/catalog-adapter.ts";
+import { CATALOG_USER_AGENT, CatalogError, createCatalogAdapter, toCatalogCandidate, toMarketReference } from "../src/catalog-adapter.ts";
+import { USD_TO_KRW, usdToKrw } from "../src/exchange-rate.ts";
 
 const abbeyRoad = {
   id: 14186441,
@@ -125,4 +126,65 @@ test("search maps upstream failures to catalog errors", async () => {
     const adapter = createCatalogAdapter({ getToken: () => "secret", fetch: mockFetch(respond).fetch });
     await assert.rejects(adapter.search({ keyword: "abbey" }), (error: unknown) => error instanceof CatalogError && error.code === code);
   }
+});
+
+test("toMarketReference maps lowest price and listing count and hides blocked or empty prices", () => {
+  assert.deepEqual(toMarketReference(1, { num_for_sale: 12, lowest_price: { value: 23.5, currency: "USD" }, blocked_from_sale: false }), {
+    releaseId: 1,
+    lowestPrice: { value: 23.5, currency: "USD" },
+    numForSale: 12
+  });
+  assert.equal(toMarketReference(1, { num_for_sale: 0, lowest_price: null }).lowestPrice, null);
+  assert.equal(toMarketReference(1, { num_for_sale: 3, lowest_price: { value: 10, currency: "USD" }, blocked_from_sale: true }).lowestPrice, null);
+  assert.equal(toMarketReference(1, {}).numForSale, 0);
+});
+
+test("getMarketReference requests USD stats and caches each release", async () => {
+  let clock = 0;
+  const { fetch, calls } = mockFetch(() => jsonResponse({ num_for_sale: 12, lowest_price: { value: 23.5, currency: "USD" } }));
+  const adapter = createCatalogAdapter({ getToken: () => "secret", fetch, now: () => clock, marketCacheTtlMs: 1000 });
+
+  const [first, concurrent] = await Promise.all([adapter.getMarketReference(7557957), adapter.getMarketReference(7557957)]);
+  assert.deepEqual(first, concurrent);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url.pathname, "/marketplace/stats/7557957");
+  assert.equal(calls[0].url.searchParams.get("curr_abbr"), "USD");
+  assert.equal((calls[0].init.headers as Record<string, string>)["User-Agent"], CATALOG_USER_AGENT);
+
+  clock = 999;
+  await adapter.getMarketReference(7557957);
+  assert.equal(calls.length, 1);
+  await adapter.getMarketReference(1813006);
+  assert.equal(calls.length, 2);
+
+  clock = 1000;
+  await adapter.getMarketReference(7557957);
+  assert.equal(calls.length, 3);
+});
+
+test("getMarketReference briefly caches upstream failures but not rate limits", async () => {
+  let clock = 0;
+  let status = 500;
+  const { fetch, calls } = mockFetch(() => jsonResponse({}, status));
+  const adapter = createCatalogAdapter({ getToken: () => "secret", fetch, now: () => clock, marketFailureTtlMs: 100 });
+
+  await assert.rejects(adapter.getMarketReference(1), (error: unknown) => error instanceof CatalogError && error.code === "UPSTREAM_FAILED");
+  await assert.rejects(adapter.getMarketReference(1), (error: unknown) => error instanceof CatalogError && error.code === "UPSTREAM_FAILED");
+  assert.equal(calls.length, 1);
+
+  status = 429;
+  await assert.rejects(adapter.getMarketReference(2), (error: unknown) => error instanceof CatalogError && error.code === "RATE_LIMITED");
+  await assert.rejects(adapter.getMarketReference(2), (error: unknown) => error instanceof CatalogError && error.code === "RATE_LIMITED");
+  assert.equal(calls.length, 3);
+
+  status = 200;
+  clock = 100;
+  await adapter.getMarketReference(1);
+  assert.equal(calls.length, 4);
+});
+
+test("usdToKrw rounds to whole won with the single fixed rate", () => {
+  assert.equal(usdToKrw(1), USD_TO_KRW);
+  assert.equal(usdToKrw(23.5), Math.round(23.5 * USD_TO_KRW));
+  assert.ok(Number.isInteger(usdToKrw(0.37)));
 });

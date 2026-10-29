@@ -439,3 +439,11 @@ a.archive-card:hover .archive-cover-wrap img { transform:scale(1.025); }
 .catalog-results small { display:block; margin-top:3px; color:#77757a; font-size:11px; }
 .edition-create form + form,.catalog-results + form,.form-message + form { margin-top:24px; }
 @media (max-width:650px) { .edition-create-body{padding:20px}.catalog-search{flex-wrap:wrap}.catalog-search input{flex-basis:100%;order:-1} }
+.market-reference { margin-top:18px; padding:14px 16px; border:1px solid var(--line); border-radius:12px; background:#fff; }
+.market-reference p { margin:0; }
+.market-reference-title { color:#77757a; font-size:11px; font-weight:700; letter-spacing:.04em; }
+.market-reference-value { margin-top:6px !important; font-size:14px; }
+.market-reference-value strong { font-size:18px; letter-spacing:-.02em; }
+.market-reference-value span { color:#48454b; }
+.market-reference-meta { margin-top:6px !important; color:#77757a; font-size:11px; }
+.market-reference-meta a { color:var(--red); }

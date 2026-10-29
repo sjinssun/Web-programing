@@ -9,6 +9,8 @@ import { PATCH as updateEdition } from "../app/api/editions/[id]/route.ts";
 import { POST as login } from "../app/api/auth/login/route.ts";
 import { POST as createEdition } from "../app/api/editions/route.ts";
 import { GET as searchCatalog } from "../app/api/catalog/search/route.ts";
+import { GET as getMarketReference } from "../app/api/editions/[id]/market-reference/route.ts";
+import { USD_TO_KRW, USD_TO_KRW_BASE_DATE } from "../src/exchange-rate.ts";
 
 test("GET /api/listings returns filtered active listings", async () => {
   const response = await getListings(new Request("http://localhost/api/listings?format=CD"));
@@ -262,6 +264,43 @@ test("GET /api/catalog/search requires an admin and proxies Discogs without expo
 
     delete process.env.DISCOGS_TOKEN;
     assert.equal((await search(adminCookie)).status, 503);
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.DISCOGS_TOKEN;
+    else process.env.DISCOGS_TOKEN = originalToken;
+  }
+});
+
+test("GET /api/editions/:id/market-reference converts Discogs USD prices to KRW and fails softly", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalToken = process.env.DISCOGS_TOKEN;
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    calls.push(String(input));
+    return Response.json({ num_for_sale: 12, lowest_price: { value: 23.5, currency: "USD" }, blocked_from_sale: false });
+  }) as typeof globalThis.fetch;
+  const request = (id: string) => getMarketReference(new Request(`http://localhost/api/editions/${id}/market-reference`), { params: Promise.resolve({ id }) });
+
+  try {
+    process.env.DISCOGS_TOKEN = "test-token";
+    assert.equal((await request("missing")).status, 404);
+    assert.equal((await request("edition-1")).status, 404);
+    assert.equal(calls.length, 0);
+
+    const response = await request("edition-8");
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.numForSale, 12);
+    assert.deepEqual(body.lowestPrice, { amount: 23.5, currency: "USD", krw: Math.round(23.5 * USD_TO_KRW) });
+    assert.deepEqual(body.exchangeRate, { usdToKrw: USD_TO_KRW, baseDate: USD_TO_KRW_BASE_DATE });
+    assert.ok(calls[0].includes("/marketplace/stats/7557957"));
+
+    assert.equal((await request("edition-8")).status, 200);
+    assert.equal(calls.length, 1);
+
+    delete process.env.DISCOGS_TOKEN;
+    assert.equal((await request("edition-6")).status, 503);
     assert.equal(calls.length, 1);
   } finally {
     globalThis.fetch = originalFetch;

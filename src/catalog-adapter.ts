@@ -17,6 +17,12 @@ export interface CatalogCandidate {
   sourceUrl: string;
 }
 
+export interface MarketReference {
+  releaseId: number;
+  lowestPrice: { value: number; currency: string } | null;
+  numForSale: number;
+}
+
 export interface CatalogSearchQuery {
   barcode?: string;
   catalogNumber?: string;
@@ -38,6 +44,7 @@ export class CatalogError extends Error {
 export interface CatalogAdapter {
   isConfigured(): boolean;
   search(query: CatalogSearchQuery): Promise<CatalogCandidate[]>;
+  getMarketReference(releaseId: number): Promise<MarketReference>;
 }
 
 export interface CatalogAdapterOptions {
@@ -46,12 +53,21 @@ export interface CatalogAdapterOptions {
   now?: () => number;
   requestsPerMinute?: number;
   timeoutMs?: number;
+  marketCacheTtlMs?: number;
+  marketFailureTtlMs?: number;
 }
 
 export const CATALOG_USER_AGENT = "VYNL/0.1 +https://github.com/sjinssun/Web-programing";
 const API_BASE = "https://api.discogs.com";
 const SITE_BASE = "https://www.discogs.com";
 const SEARCH_LIMIT = 10;
+const MARKET_CURRENCY = "USD";
+
+export const CATALOG_SOURCE_NAME = "Discogs";
+
+export function catalogMarketUrl(releaseId: number): string {
+  return `${SITE_BASE}/sell/release/${releaseId}`;
+}
 
 interface DiscogsSearchResult {
   id?: unknown;
@@ -118,15 +134,39 @@ export function toCatalogCandidate(result: DiscogsSearchResult): CatalogCandidat
   };
 }
 
+interface DiscogsMarketStats {
+  lowest_price?: { value?: unknown; currency?: unknown } | null;
+  num_for_sale?: unknown;
+  blocked_from_sale?: unknown;
+}
+
+export function toMarketReference(releaseId: number, stats: DiscogsMarketStats): MarketReference {
+  const lowest = stats.lowest_price;
+  const value = Number(lowest?.value);
+  const hasPrice = stats.blocked_from_sale !== true && Number.isFinite(value) && value > 0 && typeof lowest?.currency === "string";
+  const numForSale = Number(stats.num_for_sale);
+  return {
+    releaseId,
+    lowestPrice: hasPrice ? { value, currency: lowest!.currency as string } : null,
+    numForSale: Number.isInteger(numForSale) && numForSale > 0 ? numForSale : 0
+  };
+}
+
 export function createCatalogAdapter({
   getToken,
   fetch = (...args) => globalThis.fetch(...args),
   now = Date.now,
   requestsPerMinute = 60,
-  timeoutMs = 8000
+  timeoutMs = 8000,
+  marketCacheTtlMs = 6 * 60 * 60_000,
+  marketFailureTtlMs = 10 * 60_000
 }: CatalogAdapterOptions): CatalogAdapter {
   let windowStart = 0;
   let requestCount = 0;
+  // 같은 판본의 시세를 매번 호출하지 않도록 성공은 6시간, 외부 장애는 10분 동안 캐시한다.
+  // 한도 초과와 토큰 미설정은 캐시하지 않는다.
+  const marketCache = new Map<number, { expiresAt: number; value?: MarketReference; error?: CatalogError }>();
+  const marketInFlight = new Map<number, Promise<MarketReference>>();
 
   function reserveRequest() {
     const current = now();
@@ -189,6 +229,34 @@ export function createCatalogAdapter({
       return results
         .map(toCatalogCandidate)
         .filter((candidate): candidate is CatalogCandidate => candidate !== null);
+    },
+
+    async getMarketReference(releaseId) {
+      const cached = marketCache.get(releaseId);
+      if (cached && cached.expiresAt > now()) {
+        if (cached.error) throw cached.error;
+        return cached.value!;
+      }
+      const pending = marketInFlight.get(releaseId);
+      if (pending) return pending;
+
+      const task = (async () => {
+        try {
+          const body = await request(`/marketplace/stats/${releaseId}`, { curr_abbr: MARKET_CURRENCY }) as DiscogsMarketStats;
+          const value = toMarketReference(releaseId, body ?? {});
+          marketCache.set(releaseId, { expiresAt: now() + marketCacheTtlMs, value });
+          return value;
+        } catch (error) {
+          if (error instanceof CatalogError && error.code === "UPSTREAM_FAILED") {
+            marketCache.set(releaseId, { expiresAt: now() + marketFailureTtlMs, error });
+          }
+          throw error;
+        } finally {
+          marketInFlight.delete(releaseId);
+        }
+      })();
+      marketInFlight.set(releaseId, task);
+      return task;
     }
   };
 }
