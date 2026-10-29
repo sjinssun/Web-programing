@@ -21,6 +21,8 @@
 - 시세 데이터: `src/seed-data.ts`의 `priceHistory` 데모 체결 이력. 실제 주문이 완료되면 주문 스냅샷 가격을 체결 이력 저장소에 기록하는 구조로 교체한다.
 - 별점 데이터: `src/seed-data.ts`의 `ratings` 데모 평가. 평점은 판매글이 아닌 판본(`editionId`)에 귀속되고 사용자·판본 조합당 하나만 유지한다.
 - 테스트: Node.js 내장 테스트 러너, `test/*.test.ts`
+- 외부 API 테스트(`test/catalog-adapter.test.ts`, `test/route-handlers.test.ts`의 Discogs 관련 테스트)는 `fetch`를 주입하거나 `globalThis.fetch`를 교체해 실제 네트워크를 호출하지 않는다.
+- 환경 변수: `.env.example`을 `.env.local`로 복사해 사용한다. `DISCOGS_TOKEN`(선택, 서버 전용)이 없으면 관리자 Discogs 검색은 `503`, 해외 최저가 영역은 `정보 없음`으로 동작하고 나머지 기능은 영향을 받지 않는다. 설정 방법은 `README.md`의 `Discogs 연동 설정` 절에 있다.
 - 코드 학습용 전체 구조 문서: `docs/ARCHITECTURE_GUIDE.md`에 계층, 라우트, 도메인 관계, 요청 흐름, 파일별 역할과 추천 학습 순서를 정리한다.
 
 ## 클래스와 함수
