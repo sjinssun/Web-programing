@@ -59,6 +59,15 @@
 - 프로덕션에서는 이 저장소를 영구 사용자 DB, 비밀번호 재설정·가입·연락처 인증, 세션 만료/폐기 저장소로 교체해야 한다.
 - `User.role`은 현재 `USER` 또는 `ADMIN`이다. `user@vynl.kr`은 `USER`, `demo@vynl.kr`은 `ADMIN` 권한을 가진다.
 
+### 외부 카탈로그 어댑터 (`src/catalog-adapter.ts`)
+
+- Discogs 호출을 감싸는 유일한 모듈이다. 화면·Route Handler는 `CatalogCandidate`, `CatalogError`, `CatalogAdapter` 인터페이스만 사용하므로 다른 API로 교체할 때 이 파일만 바꾼다.
+- `createCatalogAdapter({ getToken, fetch?, now?, requestsPerMinute?, timeoutMs? })`: 테스트는 `fetch`·`now`를 주입한다.
+- `search({ barcode?, catalogNumber?, keyword? })`: Discogs `/database/search?type=release` 결과를 Edition 필드로 변환한다. `Vinyl`→`LP`, `CD`, `Cassette` 외 포맷은 제외하고, 제목은 `"Artist - Title"`을 분리하며 아티스트 동명이인 번호 `(2)`를 제거한다. 레이블은 첫 항목, 바코드는 12–13자리 숫자 항목만 사용한다(Discogs 바코드 배열에는 매트릭스 각인이 섞여 있고 바코드 검색도 부분 일치한다). 국가는 Discogs 영문 표기를 그대로 둔다.
+- 모든 요청에 `CATALOG_USER_AGENT`(`VYNL/0.1 +https://github.com/sjinssun/Web-programing`)와 `Authorization: Discogs token=...`을 보낸다. 고정 1분 창으로 분당 60회를 넘기면 대기하지 않고 `RATE_LIMITED`를 던진다.
+- 오류 코드: `NOT_CONFIGURED`(토큰 없음), `RATE_LIMITED`(로컬 한도 또는 Discogs 429), `UPSTREAM_FAILED`(네트워크·타임아웃 8초·비정상 응답).
+- 싱글턴: `lib/catalog-adapter-instance.ts`의 `catalogAdapter`. `process.env.DISCOGS_TOKEN`을 요청 시점에 서버에서만 읽는다.
+
 ## HTTP 엔드포인트
 
 | Method | Path | 설명 |
@@ -68,6 +77,7 @@
 | `GET` | `/api/listings/:id` | 판매글 상세 조회 |
 | `PATCH` | `/api/listings/:id` | 관리자 전용 판매글 사진 수정 |
 | `PATCH` | `/api/editions/:id` | 관리자 전용 판본 메타데이터 수정 |
+| `GET` | `/api/catalog/search` | 관리자 전용 외부 카탈로그(Discogs) 판본 검색 |
 | `GET` | `/api/editions/:id/price-history` | 판본의 체결가 이력과 요약 시세 조회 |
 | `GET` | `/api/editions/:id/ratings` | 판본의 공개 별점 요약과 로그인 사용자의 평가 조회 |
 | `PUT` | `/api/editions/:id/ratings` | 로그인 사용자의 판본 별점 생성·수정 |
@@ -124,12 +134,15 @@
 - 관리자 세션에는 `admin-edition-editor.tsx`가 표시된다. 저장 후에는 전체 문서를 새로고침해 수정 데이터를 표시하고, Safari에서 RSC만 갱신할 때 상세페이지 CSS가 누락되는 현상을 방지한다.
 - 존재하지 않는 판매글 ID는 Next.js `notFound()`로 404 화면을 반환한다.
 
+`GET /api/catalog/search`: 세션의 `ADMIN` 역할을 다시 검사한다(401/403). `barcode`, `catno`, `q` 중 하나 이상이 필요하며(없으면 400) `{ items: CatalogCandidate[], total }`을 반환한다. 어댑터 오류는 `NOT_CONFIGURED` 503, `RATE_LIMITED` 429, `UPSTREAM_FAILED` 502로 변환한다.
+
 엔드포인트 구현 위치:
 
 - `/api/meta`: `app/api/meta/route.ts`
 - `/api/listings`: `app/api/listings/route.ts`
 - `/api/listings/:id`: `app/api/listings/[id]/route.ts`
 - `/api/editions/:id`: `app/api/editions/[id]/route.ts`
+- `/api/catalog/search`: `app/api/catalog/search/route.ts`
 - `/api/editions/:id/price-history`: `app/api/editions/[id]/price-history/route.ts`
 - `/api/editions/:id/ratings`: `app/api/editions/[id]/ratings/route.ts`
 
