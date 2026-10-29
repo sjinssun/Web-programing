@@ -182,3 +182,41 @@ test("rating archive ranks editions and links an active listing", () => {
   assert.equal(archive[0].rating.ratingCount, 4);
   assert.equal(archive[0].listingId, "listing-103");
 });
+
+test("createEdition requires every field and stores an optional Discogs release ID", () => {
+  const store = createStore();
+  assert.throws(() => store.createEdition({ title: "제목만" }), (error: unknown) => {
+    assert.ok(error instanceof ValidationError);
+    for (const field of ["artist", "format", "year", "country", "label", "catalogNumber", "barcode", "cover"]) assert.ok(error.fields[field], field);
+    return true;
+  });
+
+  const created = store.createEdition({
+    artist: "The Beatles", title: "Abbey Road", format: "LP", year: "1969", country: "UK", label: "Apple Records",
+    catalogNumber: "PCS 7088", barcode: "5099969945410", cover: "https://example.com/abbey.jpg", discogsReleaseId: 2523519
+  });
+  assert.equal(created.id, "edition-11");
+  assert.equal(created.year, 1969);
+  assert.equal(created.discogsReleaseId, 2523519);
+  assert.deepEqual(store.findEdition("edition-11"), created);
+  assert.ok(store.getMeta().editions.some((edition) => edition.id === "edition-11"));
+
+  const withoutDiscogs = store.createEdition({ ...created, id: undefined, discogsReleaseId: undefined } as never);
+  assert.equal(withoutDiscogs.id, "edition-12");
+  assert.equal("discogsReleaseId" in withoutDiscogs, false);
+});
+
+test("createEdition rejects invalid or duplicate Discogs release IDs", () => {
+  const store = createStore();
+  const base = { artist: "Nirvana", title: "Nevermind", format: "LP", year: 1991, country: "US", label: "DGC", catalogNumber: "DGC-24425", barcode: "720642442517", cover: "/assets/nevermind.jpg" };
+  assert.throws(() => store.createEdition({ ...base, discogsReleaseId: "abc" }), (error: unknown) => error instanceof ValidationError && Boolean(error.fields.discogsReleaseId));
+  assert.throws(() => store.createEdition({ ...base, discogsReleaseId: 1813006 }), (error: unknown) => error instanceof ValidationError && error.fields.discogsReleaseId === "이미 등록된 Discogs 판본입니다.");
+});
+
+test("seed editions keep Discogs release IDs only for exact barcode matches", () => {
+  const store = createStore();
+  assert.equal(store.findEdition("edition-6")?.discogsReleaseId, 1813006);
+  assert.equal(store.findEdition("edition-7")?.discogsReleaseId, 4570366);
+  assert.equal(store.findEdition("edition-8")?.discogsReleaseId, 7557957);
+  assert.equal(store.findEdition("edition-2")?.discogsReleaseId, undefined);
+});

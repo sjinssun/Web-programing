@@ -17,6 +17,7 @@
 - 도메인 타입: `src/types.ts`
 - 데이터: `src/seed-data.ts`의 초기 데이터와 프로세스 메모리 저장
 - 홈 샘플 데이터: 판본 10개와 판매글 11개를 제공한다. 대표 커버와 샘플 판매 사진 경로는 `src/seed-data.ts`에서 관리하며, 사용자가 제공한 실제 커버 이미지는 `public/assets/`에 있다.
+- Discogs 연결: `Edition.discogsReleaseId`(선택). 시드는 바코드가 Discogs 판본의 바코드 목록과 정확히 일치하고 관리자가 후보를 확정한 `edition-6`(1813006), `edition-7`(4570366), `edition-8`(7557957)만 연결되어 있다. 나머지 시드는 Discogs 바코드 검색 결과가 없어 연결하지 않았다.
 - 시세 데이터: `src/seed-data.ts`의 `priceHistory` 데모 체결 이력. 실제 주문이 완료되면 주문 스냅샷 가격을 체결 이력 저장소에 기록하는 구조로 교체한다.
 - 별점 데이터: `src/seed-data.ts`의 `ratings` 데모 평가. 평점은 판매글이 아닌 판본(`editionId`)에 귀속되고 사용자·판본 조합당 하나만 유지한다.
 - 테스트: Node.js 내장 테스트 러너, `test/*.test.ts`
@@ -30,6 +31,7 @@
 - `findListings(query)`: 활성 판매글만 검색·필터·정렬한다.
 - `findListing(id)`: 상태와 관계없이 단일 판매글을 판본 정보와 함께 반환한다.
 - `getAdminDashboard()`: 모든 판매글의 상태별 수와 최근 판매글 최대 8개를 반환한다.
+- `createEdition(input)`: 관리자 추가 API가 전달한 판본의 모든 메타데이터(제목·아티스트·포맷·연도·국가·레이블·카탈로그 번호·바코드·썸네일)를 필수로 검증하고 `edition-N` ID로 추가한다. 선택 필드 `discogsReleaseId`는 양의 정수여야 하며 이미 등록된 Discogs 판본이면 거부한다. `updateEdition`과 필드 검증 함수 `readEditionFields(input, required)`를 공유한다.
 - `updateEdition(editionId, input)`: 관리자 편집 API가 전달한 판본 메타데이터와 대표 썸네일 URL을 검증하고 수정한다. 같은 판본을 참조하는 홈·앨범 정보·판매글에 반영된다.
 - `updateListing(listingId, input)`: 관리자 편집 API가 현재 판매글의 실물 사진 URL을 1장 이상으로 검증하고 교체한다.
 - `createListing(input)`: 필수 입력을 검증하고 `ACTIVE` 판매글을 생성한다.
@@ -48,6 +50,7 @@
 
 - Route Handler와 서버 컴포넌트가 공유하는 프로세스 단위 저장소다.
 - 개발 모드 Fast Refresh 중 중복 생성을 피하기 위해 `globalThis`에 보존한다. Next.js의 서로 다른 서버 번들에서는 클래스 생성자 식별자가 달라질 수 있으므로 `instanceof`가 아니라 필수 공개 메서드 호환성으로 기존 인스턴스를 판별한다.
+- 현재 `BOARD_STORE_VERSION`은 `5`다(`Edition.discogsReleaseId` 시드 추가).
 - `BOARD_STORE_VERSION`이 바뀌면 개발 서버의 기존 메모리 인스턴스를 새 시드 데이터로 한 번 교체한다. 시드 구조를 바꿀 때 이 값을 올린다.
 - 영구 저장소를 도입하면 이 모듈의 export를 DB 기반 구현으로 교체한다.
 
@@ -77,6 +80,7 @@
 | `GET` | `/api/listings/:id` | 판매글 상세 조회 |
 | `PATCH` | `/api/listings/:id` | 관리자 전용 판매글 사진 수정 |
 | `PATCH` | `/api/editions/:id` | 관리자 전용 판본 메타데이터 수정 |
+| `POST` | `/api/editions` | 관리자 전용 판본 추가 |
 | `GET` | `/api/catalog/search` | 관리자 전용 외부 카탈로그(Discogs) 판본 검색 |
 | `GET` | `/api/editions/:id/price-history` | 판본의 체결가 이력과 요약 시세 조회 |
 | `GET` | `/api/editions/:id/ratings` | 판본의 공개 별점 요약과 로그인 사용자의 평가 조회 |
@@ -100,6 +104,7 @@
 ### 앨범 정보 관리
 
 - 경로: `/admin/albums` (`app/admin/albums/page.tsx`). 서버 컴포넌트가 `vynl_session`을 확인하며 `ADMIN`이 아니면 `/`로 이동시킨다.
+- 상단 `앨범 추가` 영역(`app/admin/albums/edition-create-form.tsx`, 클라이언트 컴포넌트)은 바코드·카탈로그 번호·키워드로 `GET /api/catalog/search`를 호출하고, 결과를 클릭하면 폼을 채운다. 관리자가 수정한 뒤 `POST /api/editions`로 저장하고 페이지를 새로고침한다. 검색이 실패하거나 토큰이 없어도 직접 입력해 저장할 수 있다. 스타일은 `public/styles.css`의 `edition-create-*`, `catalog-search`, `catalog-results` 클래스다.
 - 전체 판본의 제목·아티스트·판본·별점·판매 중 매물 수를 표시하고 각 `/albums/:editionId`의 `상세·수정`으로 연결한다.
 - 앨범 정보 페이지는 관리자 세션에만 `앨범 페이지 수정` 버튼을 표시한다. 기존 `AdminEditionEditor`를 메타데이터 전용 모드로 재사용하며 제목·판본 정보와 홈/앨범 페이지 공통 썸네일 URL을 수정한다. 판매글 상세에서 사용할 때만 매물별 실물 사진 입력을 함께 표시한다.
 - 저장 요청은 기존 관리자 전용 `PATCH /api/editions/:id`를 사용한다. API가 권한을 다시 확인하고 홈, 앨범 정보, 판매글 상세, 두 관리자 화면을 재검증한다.
@@ -136,12 +141,15 @@
 
 `GET /api/catalog/search`: 세션의 `ADMIN` 역할을 다시 검사한다(401/403). `barcode`, `catno`, `q` 중 하나 이상이 필요하며(없으면 400) `{ items: CatalogCandidate[], total }`을 반환한다. 어댑터 오류는 `NOT_CONFIGURED` 503, `RATE_LIMITED` 429, `UPSTREAM_FAILED` 502로 변환한다.
 
+`POST /api/editions`: 세션의 `ADMIN` 역할을 다시 검사한다(401/403). 성공 시 `201`과 생성된 `Edition`을 반환하고 홈·`/admin/albums`를 재검증한다. 검증 오류와 중복 `discogsReleaseId`는 `400`과 `fields`로 반환한다.
+
 엔드포인트 구현 위치:
 
 - `/api/meta`: `app/api/meta/route.ts`
 - `/api/listings`: `app/api/listings/route.ts`
 - `/api/listings/:id`: `app/api/listings/[id]/route.ts`
 - `/api/editions/:id`: `app/api/editions/[id]/route.ts`
+- `/api/editions`: `app/api/editions/route.ts`
 - `/api/catalog/search`: `app/api/catalog/search/route.ts`
 - `/api/editions/:id/price-history`: `app/api/editions/[id]/price-history/route.ts`
 - `/api/editions/:id/ratings`: `app/api/editions/[id]/ratings/route.ts`

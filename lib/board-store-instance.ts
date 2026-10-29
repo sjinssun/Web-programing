@@ -6,7 +6,7 @@ const globalStore = globalThis as typeof globalThis & {
   __vynlBoardStoreVersion?: number;
 };
 
-const BOARD_STORE_VERSION = 4;
+const BOARD_STORE_VERSION = 5;
 
 function isCompatibleBoardStore(value: unknown): value is BoardStore {
   if (!value || typeof value !== "object") return false;
@@ -18,6 +18,7 @@ function isCompatibleBoardStore(value: unknown): value is BoardStore {
     "findListing",
     "getAdminDashboard",
     "updateEdition",
+    "createEdition",
     "updateListing",
     "createListing",
     "getPriceHistory",

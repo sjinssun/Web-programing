@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { authStore } from "../../../lib/auth-store-instance.ts";
 import { boardStore } from "../../../lib/board-store-instance.ts";
 import { SESSION_COOKIE } from "../../../src/auth-store.ts";
+import EditionCreateForm from "./edition-create-form.tsx";
 
 export default async function AdminAlbumsPage() {
   const session = (await cookies()).get(SESSION_COOKIE)?.value;
@@ -23,6 +24,7 @@ export default async function AdminAlbumsPage() {
         <h1>앨범 정보 관리</h1>
         <p>홈 아카이브에 표시되는 판본 정보와 별점 현황을 관리합니다.</p>
       </section>
+      <EditionCreateForm />
       <section className="admin-listings" aria-labelledby="admin-albums-title">
         <div className="admin-section-heading"><div><p className="eyebrow">ALBUM ARCHIVE</p><h2 id="admin-albums-title">등록 앨범</h2></div><p>총 {editions.length}개 판본</p></div>
         <div className="admin-table-wrap">

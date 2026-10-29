@@ -23,15 +23,15 @@ export const editions: Edition[] = [
   },
   {
     id: "edition-6", artist: "Nirvana", title: "Nevermind", format: "LP", year: 1991,
-    country: "US", label: "DGC", catalogNumber: "DGC-24425", barcode: "720642442517", cover: "/assets/nevermind.jpg"
+    country: "US", label: "DGC", catalogNumber: "DGC-24425", barcode: "720642442517", cover: "/assets/nevermind.jpg", discogsReleaseId: 1813006
   },
   {
     id: "edition-7", artist: "Daft Punk", title: "Random Access Memories", format: "LP", year: 2013,
-    country: "EU", label: "Columbia", catalogNumber: "88883716861", barcode: "888837168618", cover: "/assets/random_access_memory.jpg"
+    country: "EU", label: "Columbia", catalogNumber: "88883716861", barcode: "888837168618", cover: "/assets/random_access_memory.jpg", discogsReleaseId: 4570366
   },
   {
     id: "edition-8", artist: "Kendrick Lamar", title: "To Pimp a Butterfly", format: "LP", year: 2015,
-    country: "US", label: "Top Dawg", catalogNumber: "B0023464-01", barcode: "602547311009", cover: "/assets/To_Pimp_A_Butterfly.jpg"
+    country: "US", label: "Top Dawg", catalogNumber: "B0023464-01", barcode: "602547311009", cover: "/assets/To_Pimp_A_Butterfly.jpg", discogsReleaseId: 7557957
   },
   {
     id: "edition-9", artist: "아이유", title: "Palette", format: "CD", year: 2017,

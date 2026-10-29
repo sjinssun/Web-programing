@@ -4,6 +4,7 @@ import type {
   BoardMeta,
   AdminDashboard,
   Condition,
+  CreateEditionInput,
   CreateListingInput,
   Edition,
   Listing,
@@ -37,6 +38,40 @@ function isPublicCondition(value: unknown): value is PublicCondition {
   return isCondition(value) && value !== "미확인";
 }
 
+const EDITION_TEXT_FIELDS = ["artist", "title", "country", "label", "catalogNumber", "barcode", "cover"] as const;
+
+// required가 false이면 전달된 필드만 검증한다(부분 수정). true이면 모든 필드가 필요하다(신규 생성).
+function readEditionFields(input: UpdateEditionInput, required: boolean) {
+  const errors: Record<string, string> = {};
+  const values: Partial<Edition> = {};
+
+  for (const field of EDITION_TEXT_FIELDS) {
+    if (input[field] === undefined && !required) continue;
+    const value = String(input[field] ?? "").trim();
+    if (!value) errors[field] = "필수 정보를 입력해 주세요.";
+    else values[field] = value;
+  }
+
+  if (input.format !== undefined || required) {
+    if (typeof input.format !== "string" || !FORMATS.includes(input.format as Edition["format"])) {
+      errors.format = "지원하는 포맷을 선택해 주세요.";
+    } else {
+      values.format = input.format as Edition["format"];
+    }
+  }
+
+  if (input.year !== undefined || required) {
+    const year = Number(input.year);
+    if (!Number.isInteger(year) || year < 1900 || year > 2100) {
+      errors.year = "발매연도는 1900–2100 사이의 정수여야 합니다.";
+    } else {
+      values.year = year;
+    }
+  }
+
+  return { values, errors };
+}
+
 export class ValidationError extends Error {
   fields: Record<string, string>;
 
@@ -53,6 +88,7 @@ export class BoardStore {
   private priceHistory: PriceHistoryPoint[];
   private ratings: AlbumRating[];
   private nextId: number;
+  private nextEditionId: number;
   private nextRatingId: number;
 
   constructor({ editions = [], listings = [], priceHistory = [], ratings = [] }: { editions?: Edition[]; listings?: Listing[]; priceHistory?: PriceHistoryPoint[]; ratings?: AlbumRating[] } = {}) {
@@ -62,6 +98,10 @@ export class BoardStore {
     this.ratings = structuredClone(ratings);
     this.nextId = this.listings.reduce((max, listing) => {
       const number = Number(listing.id.split("-").at(-1));
+      return Number.isFinite(number) ? Math.max(max, number + 1) : max;
+    }, 1);
+    this.nextEditionId = this.editions.reduce((max, edition) => {
+      const number = Number(edition.id.split("-").at(-1));
       return Number.isFinite(number) ? Math.max(max, number + 1) : max;
     }, 1);
     this.nextRatingId = this.ratings.reduce((max, rating) => {
@@ -207,38 +247,36 @@ export class BoardStore {
       throw new ValidationError("수정할 판본을 찾을 수 없습니다.", { editionId: "존재하지 않는 판본입니다." });
     }
 
-    const errors: Record<string, string> = {};
-    const changes: Partial<Edition> = {};
-    const textFields = ["artist", "title", "country", "label", "catalogNumber", "barcode", "cover"] as const;
-
-    for (const field of textFields) {
-      if (input[field] === undefined) continue;
-      const value = String(input[field] ?? "").trim();
-      if (!value) errors[field] = "필수 정보를 입력해 주세요.";
-      else changes[field] = value;
-    }
-
-    if (input.format !== undefined) {
-      if (typeof input.format !== "string" || !FORMATS.includes(input.format as Edition["format"])) {
-        errors.format = "지원하는 포맷을 선택해 주세요.";
-      } else {
-        changes.format = input.format as Edition["format"];
-      }
-    }
-
-    if (input.year !== undefined) {
-      const year = Number(input.year);
-      if (!Number.isInteger(year) || year < 1900 || year > 2100) {
-        errors.year = "발매연도는 1900–2100 사이의 정수여야 합니다.";
-      } else {
-        changes.year = year;
-      }
-    }
+    const { values: changes, errors } = readEditionFields(input, false);
 
     if (Object.keys(changes).length === 0 && Object.keys(errors).length === 0) errors.form = "수정할 정보를 입력해 주세요.";
     if (Object.keys(errors).length) throw new ValidationError("앨범 정보를 확인해 주세요.", errors);
 
     Object.assign(edition, changes);
+    return structuredClone(edition);
+  }
+
+  createEdition(input: CreateEditionInput): Edition {
+    const { values, errors } = readEditionFields(input, true);
+
+    let discogsReleaseId: number | undefined;
+    if (input.discogsReleaseId !== undefined && input.discogsReleaseId !== null && input.discogsReleaseId !== "") {
+      discogsReleaseId = Number(input.discogsReleaseId);
+      if (!Number.isInteger(discogsReleaseId) || discogsReleaseId <= 0) {
+        errors.discogsReleaseId = "Discogs 판본 ID는 양의 정수여야 합니다.";
+      } else if (this.editions.some((edition) => edition.discogsReleaseId === discogsReleaseId)) {
+        errors.discogsReleaseId = "이미 등록된 Discogs 판본입니다.";
+      }
+    }
+
+    if (Object.keys(errors).length) throw new ValidationError("앨범 정보를 확인해 주세요.", errors);
+
+    const edition: Edition = {
+      id: `edition-${this.nextEditionId++}`,
+      ...(values as Omit<Edition, "id">),
+      ...(discogsReleaseId === undefined ? {} : { discogsReleaseId })
+    };
+    this.editions.push(edition);
     return structuredClone(edition);
   }
 
