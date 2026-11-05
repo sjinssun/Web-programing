@@ -17,9 +17,12 @@
 - 도메인 타입: `src/types.ts`
 - 데이터: `src/seed-data.ts`의 초기 데이터와 프로세스 메모리 저장
 - 홈 샘플 데이터: 판본 10개와 판매글 11개를 제공한다. 대표 커버와 샘플 판매 사진 경로는 `src/seed-data.ts`에서 관리하며, 사용자가 제공한 실제 커버 이미지는 `public/assets/`에 있다.
+- Discogs 연결: `Edition.discogsReleaseId`(선택). 시드는 바코드가 Discogs 판본의 바코드 목록과 정확히 일치하고 관리자가 후보를 확정한 `edition-6`(1813006), `edition-7`(4570366), `edition-8`(7557957)만 연결되어 있다. 나머지 시드는 Discogs 바코드 검색 결과가 없어 연결하지 않았다.
 - 시세 데이터: `src/seed-data.ts`의 `priceHistory` 데모 체결 이력. 실제 주문이 완료되면 주문 스냅샷 가격을 체결 이력 저장소에 기록하는 구조로 교체한다.
 - 별점 데이터: `src/seed-data.ts`의 `ratings` 데모 평가. 평점은 판매글이 아닌 판본(`editionId`)에 귀속되고 사용자·판본 조합당 하나만 유지한다.
 - 테스트: Node.js 내장 테스트 러너, `test/*.test.ts`
+- 외부 API 테스트(`test/catalog-adapter.test.ts`, `test/route-handlers.test.ts`의 Discogs 관련 테스트)는 `fetch`를 주입하거나 `globalThis.fetch`를 교체해 실제 네트워크를 호출하지 않는다.
+- 환경 변수: `.env.example`을 `.env.local`로 복사해 사용한다. `DISCOGS_TOKEN`(선택, 서버 전용)이 없으면 관리자 Discogs 검색은 `503`, 해외 최저가 영역은 `정보 없음`으로 동작하고 나머지 기능은 영향을 받지 않는다. 설정 방법은 `README.md`의 `Discogs 연동 설정` 절에 있다.
 - 코드 학습용 전체 구조 문서: `docs/ARCHITECTURE_GUIDE.md`에 계층, 라우트, 도메인 관계, 요청 흐름, 파일별 역할과 추천 학습 순서를 정리한다.
 
 ## 클래스와 함수
@@ -30,6 +33,7 @@
 - `findListings(query)`: 활성 판매글만 검색·필터·정렬한다.
 - `findListing(id)`: 상태와 관계없이 단일 판매글을 판본 정보와 함께 반환한다.
 - `getAdminDashboard()`: 모든 판매글의 상태별 수와 최근 판매글 최대 8개를 반환한다.
+- `createEdition(input)`: 관리자 추가 API가 전달한 판본의 모든 메타데이터(제목·아티스트·포맷·연도·국가·레이블·카탈로그 번호·바코드·썸네일)를 필수로 검증하고 `edition-N` ID로 추가한다. 선택 필드 `discogsReleaseId`는 양의 정수여야 하며 이미 등록된 Discogs 판본이면 거부한다. `updateEdition`과 필드 검증 함수 `readEditionFields(input, required)`를 공유한다.
 - `updateEdition(editionId, input)`: 관리자 편집 API가 전달한 판본 메타데이터와 대표 썸네일 URL을 검증하고 수정한다. 같은 판본을 참조하는 홈·앨범 정보·판매글에 반영된다.
 - `updateListing(listingId, input)`: 관리자 편집 API가 현재 판매글의 실물 사진 URL을 1장 이상으로 검증하고 교체한다.
 - `createListing(input)`: 필수 입력을 검증하고 `ACTIVE` 판매글을 생성한다.
@@ -48,6 +52,7 @@
 
 - Route Handler와 서버 컴포넌트가 공유하는 프로세스 단위 저장소다.
 - 개발 모드 Fast Refresh 중 중복 생성을 피하기 위해 `globalThis`에 보존한다. Next.js의 서로 다른 서버 번들에서는 클래스 생성자 식별자가 달라질 수 있으므로 `instanceof`가 아니라 필수 공개 메서드 호환성으로 기존 인스턴스를 판별한다.
+- 현재 `BOARD_STORE_VERSION`은 `5`다(`Edition.discogsReleaseId` 시드 추가).
 - `BOARD_STORE_VERSION`이 바뀌면 개발 서버의 기존 메모리 인스턴스를 새 시드 데이터로 한 번 교체한다. 시드 구조를 바꿀 때 이 값을 올린다.
 - 영구 저장소를 도입하면 이 모듈의 export를 DB 기반 구현으로 교체한다.
 
@@ -59,6 +64,22 @@
 - 프로덕션에서는 이 저장소를 영구 사용자 DB, 비밀번호 재설정·가입·연락처 인증, 세션 만료/폐기 저장소로 교체해야 한다.
 - `User.role`은 현재 `USER` 또는 `ADMIN`이다. `user@vynl.kr`은 `USER`, `demo@vynl.kr`은 `ADMIN` 권한을 가진다.
 
+### 외부 카탈로그 어댑터 (`src/catalog-adapter.ts`)
+
+- Discogs 호출을 감싸는 유일한 모듈이다. 화면·Route Handler는 `CatalogCandidate`, `CatalogError`, `CatalogAdapter` 인터페이스만 사용하므로 다른 API로 교체할 때 이 파일만 바꾼다.
+- `createCatalogAdapter({ getToken, fetch?, now?, requestsPerMinute?, timeoutMs? })`: 테스트는 `fetch`·`now`를 주입한다.
+- `search({ barcode?, catalogNumber?, keyword? })`: Discogs `/database/search?type=release` 결과를 Edition 필드로 변환한다. `Vinyl`→`LP`, `CD`, `Cassette` 외 포맷은 제외하고, 제목은 `"Artist - Title"`을 분리하며 아티스트 동명이인 번호 `(2)`를 제거한다. 레이블은 첫 항목, 바코드는 12–13자리 숫자 항목만 사용한다(Discogs 바코드 배열에는 매트릭스 각인이 섞여 있고 바코드 검색도 부분 일치한다). 국가는 Discogs 영문 표기를 그대로 둔다.
+- 모든 요청에 `CATALOG_USER_AGENT`(`VYNL/0.1 +https://github.com/sjinssun/Web-programing`)와 `Authorization: Discogs token=...`을 보낸다. 고정 1분 창으로 분당 60회를 넘기면 대기하지 않고 `RATE_LIMITED`를 던진다.
+- 오류 코드: `NOT_CONFIGURED`(토큰 없음), `RATE_LIMITED`(로컬 한도 또는 Discogs 429), `UPSTREAM_FAILED`(네트워크·타임아웃 8초·비정상 응답).
+- `getMarketReference(releaseId)`: Discogs `/marketplace/stats/{id}?curr_abbr=USD`를 `MarketReference { releaseId, lowestPrice: { value, currency } | null, numForSale }`로 변환한다. `blocked_from_sale`이거나 가격이 없으면 `lowestPrice`는 `null`이다. 판본별로 성공은 6시간, `UPSTREAM_FAILED`는 10분 캐시하고(`marketCacheTtlMs`, `marketFailureTtlMs`), 같은 판본 동시 요청은 한 번만 호출한다. `RATE_LIMITED`·`NOT_CONFIGURED`는 캐시하지 않는다.
+- 화면용 상수·헬퍼: `CATALOG_SOURCE_NAME`(출처 표기), `catalogMarketUrl(releaseId)`(출처 링크). 서버 컴포넌트가 계산해 클라이언트 컴포넌트에 prop으로 넘긴다.
+- 싱글턴: `lib/catalog-adapter-instance.ts`의 `catalogAdapter`. `process.env.DISCOGS_TOKEN`을 요청 시점에 서버에서만 읽는다. 어댑터 메서드를 바꾸면 `CATALOG_ADAPTER_VERSION`을 올려 개발 서버의 기존 인스턴스를 교체한다(현재 `2`).
+
+### 고정 환율 (`src/exchange-rate.ts`)
+
+- `USD_TO_KRW`(현재 `1334`)와 `USD_TO_KRW_BASE_DATE`(현재 `2026-10-29`)가 원화 환산의 유일한 기준이다. 실시간 환율이 아니므로 값을 바꿀 때 기준일도 함께 갱신한다.
+- `usdToKrw(usd)`: 원 단위 정수로 반올림한다.
+
 ## HTTP 엔드포인트
 
 | Method | Path | 설명 |
@@ -68,6 +89,9 @@
 | `GET` | `/api/listings/:id` | 판매글 상세 조회 |
 | `PATCH` | `/api/listings/:id` | 관리자 전용 판매글 사진 수정 |
 | `PATCH` | `/api/editions/:id` | 관리자 전용 판본 메타데이터 수정 |
+| `POST` | `/api/editions` | 관리자 전용 판본 추가 |
+| `GET` | `/api/catalog/search` | 관리자 전용 외부 카탈로그(Discogs) 판본 검색 |
+| `GET` | `/api/editions/:id/market-reference` | 판본의 해외 최저가 참고 시세(Discogs, 원화 환산) |
 | `GET` | `/api/editions/:id/price-history` | 판본의 체결가 이력과 요약 시세 조회 |
 | `GET` | `/api/editions/:id/ratings` | 판본의 공개 별점 요약과 로그인 사용자의 평가 조회 |
 | `PUT` | `/api/editions/:id/ratings` | 로그인 사용자의 판본 별점 생성·수정 |
@@ -90,6 +114,7 @@
 ### 앨범 정보 관리
 
 - 경로: `/admin/albums` (`app/admin/albums/page.tsx`). 서버 컴포넌트가 `vynl_session`을 확인하며 `ADMIN`이 아니면 `/`로 이동시킨다.
+- 상단 `앨범 추가` 영역(`app/admin/albums/edition-create-form.tsx`, 클라이언트 컴포넌트)은 바코드·카탈로그 번호·키워드로 `GET /api/catalog/search`를 호출하고, 결과를 클릭하면 폼을 채운다. 관리자가 수정한 뒤 `POST /api/editions`로 저장하고 페이지를 새로고침한다. 검색이 실패하거나 토큰이 없어도 직접 입력해 저장할 수 있다. 스타일은 `public/styles.css`의 `edition-create-*`, `catalog-search`, `catalog-results` 클래스다.
 - 전체 판본의 제목·아티스트·판본·별점·판매 중 매물 수를 표시하고 각 `/albums/:editionId`의 `상세·수정`으로 연결한다.
 - 앨범 정보 페이지는 관리자 세션에만 `앨범 페이지 수정` 버튼을 표시한다. 기존 `AdminEditionEditor`를 메타데이터 전용 모드로 재사용하며 제목·판본 정보와 홈/앨범 페이지 공통 썸네일 URL을 수정한다. 판매글 상세에서 사용할 때만 매물별 실물 사진 입력을 함께 표시한다.
 - 저장 요청은 기존 관리자 전용 `PATCH /api/editions/:id`를 사용한다. API가 권한을 다시 확인하고 홈, 앨범 정보, 판매글 상세, 두 관리자 화면을 재검증한다.
@@ -108,6 +133,7 @@
 - 경로: `/albums/:editionId` (`app/albums/[id]/page.tsx`)
 - `BoardStore.findEdition()`으로 판매글과 독립된 판본 정보를 조회하고 커버·아티스트·제목·발매연도·국가·레이블·카탈로그 번호·바코드와 판본 별점을 표시한다.
 - 별점 입력은 기존 `app/listings/[id]/rating-widget.tsx`를 재사용하며 판본의 `editionId`로 저장된다.
+- 판본에 `discogsReleaseId`가 있으면 별점 아래에 `MarketReference`(`app/listings/[id]/market-reference.tsx`)로 해외 최저가 참고 시세를 표시한다.
 - 하단 장터 영역은 해당 판본의 활성 판매글 수를 표시하고, 매물이 있으면 별도의 `/listings/:id`로 이동한다. 존재하지 않는 판본 ID는 404를 반환한다.
 
 ## 판매글 상세 화면
@@ -118,11 +144,18 @@
 - 상세 상단은 900px 초과 화면에서 정사각형 실물 사진과 제목·별점·시세 영역을 좌우로 배치한다. 왼쪽 열은 상세 영역 너비의 `47.5%`를 사용하되 최소 `480px`, 최대 상세 영역 기준 약 `590px`이며, 캐러셀은 `width: 100%`와 `aspect-ratio: 1 / 1`로 프레임 너비와 높이가 항상 같이 변한다. 상단 그리드와 오른쪽 정보 영역에는 인라인 `height: auto`도 지정해 창 크기 변경 후 과거의 `480px` 높이 규칙이 남더라도 캐러셀이 부모 밖으로 넘치지 않고 두 영역이 같은 행 높이를 사용한다. 앨범 이미지는 `object-fit: contain`으로 원본 비율을 보존한다. 900px 이하에서는 사진과 정보가 한 열로 전환되고 사진은 최대 `480px`의 정사각형으로 표시된다. 상태·구성품·하자·구매 안내는 하단 정보 영역에 둔다.
 - 오른쪽 상품 영역은 최근 거래가와 `그래프 보기` 버튼만 표시하며, 시세 그래프는 `app/listings/[id]/price-history-dialog.tsx`의 네이티브 `<dialog>`에서 연다.
 - 실물 사진은 `app/listings/[id]/photo-carousel.tsx`에서 현재 사진 한 장만 렌더링한다. 좌우 버튼·키보드 방향키·모바일 스와이프로 사진을 바꾸며 가로 전환 애니메이션을 적용한다. 캐러셀 핵심 스타일은 `photo-carousel.module.css`에 분리되어 있으며, 캐러셀 너비를 기준으로 `aspect-ratio: 1 / 1`이 높이를 계산하므로 확대 시에도 프레임과 사진 비율이 어긋나지 않는다. Safari에 이전 전역 `min-height` 규칙이 남아 있어도 세로만 늘어나지 않도록 같은 정사각형 제약을 캐러셀 루트의 인라인 스타일에도 적용한다.
+- 해외 참고 시세: 판본에 `discogsReleaseId`가 있으면 `그래프 보기` 아래에 `app/listings/[id]/market-reference.tsx`를 표시한다. 클라이언트 컴포넌트가 페이지 렌더링 후 `GET /api/editions/:id/market-reference`를 호출하므로 외부 API 지연·실패가 페이지에 영향을 주지 않는다. `약 ₩42,875 (US$ 32.14) · 판매 138건` 형식이며, 가격이 없거나 요청이 실패하면 `정보 없음`을 표시한다. 환율 기준일과 출처 링크(`출처: Discogs 마켓플레이스`)는 항상 표시한다(기준일은 원화 환산값이 있을 때). 스타일은 `public/styles.css`의 `market-reference*` 클래스다. 기존 데모 시세 그래프는 그대로다.
 - 시세 SVG 컴포넌트: `app/listings/[id]/price-history-chart.tsx`
 - SVG 거래 지점의 날짜·가격 접근성 정보는 React SSR hydration이 일치하도록 `aria-label`에 제공한다.
 - `app/listings/[id]/rating-widget.tsx`는 평균·참여 수를 표시하며 별 버튼의 `aria-label`과 `aria-pressed`로 키보드·스크린리더 평가를 지원한다.
 - 관리자 세션에는 `admin-edition-editor.tsx`가 표시된다. 저장 후에는 전체 문서를 새로고침해 수정 데이터를 표시하고, Safari에서 RSC만 갱신할 때 상세페이지 CSS가 누락되는 현상을 방지한다.
 - 존재하지 않는 판매글 ID는 Next.js `notFound()`로 404 화면을 반환한다.
+
+`GET /api/catalog/search`: 세션의 `ADMIN` 역할을 다시 검사한다(401/403). `barcode`, `catno`, `q` 중 하나 이상이 필요하며(없으면 400) `{ items: CatalogCandidate[], total }`을 반환한다. 어댑터 오류는 `NOT_CONFIGURED` 503, `RATE_LIMITED` 429, `UPSTREAM_FAILED` 502로 변환한다.
+
+`POST /api/editions`: 세션의 `ADMIN` 역할을 다시 검사한다(401/403). 성공 시 `201`과 생성된 `Edition`을 반환하고 홈·`/admin/albums`를 재검증한다. 검증 오류와 중복 `discogsReleaseId`는 `400`과 `fields`로 반환한다.
+
+`GET /api/editions/:id/market-reference`: 공개 API. 판본이 없거나 `discogsReleaseId`가 없으면 `404`. 성공 시 `{ editionId, numForSale, lowestPrice: { amount, currency, krw } | null, exchangeRate: { usdToKrw, baseDate } }`를 반환하며 `krw`는 통화가 USD일 때만 계산한다. 어댑터 오류는 503/429/502로 변환한다.
 
 엔드포인트 구현 위치:
 
@@ -130,6 +163,9 @@
 - `/api/listings`: `app/api/listings/route.ts`
 - `/api/listings/:id`: `app/api/listings/[id]/route.ts`
 - `/api/editions/:id`: `app/api/editions/[id]/route.ts`
+- `/api/editions`: `app/api/editions/route.ts`
+- `/api/catalog/search`: `app/api/catalog/search/route.ts`
+- `/api/editions/:id/market-reference`: `app/api/editions/[id]/market-reference/route.ts`
 - `/api/editions/:id/price-history`: `app/api/editions/[id]/price-history/route.ts`
 - `/api/editions/:id/ratings`: `app/api/editions/[id]/ratings/route.ts`
 

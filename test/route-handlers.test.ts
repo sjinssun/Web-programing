@@ -7,6 +7,10 @@ import { GET as getPriceHistory } from "../app/api/editions/[id]/price-history/r
 import { GET as getRatings, PUT as putRating } from "../app/api/editions/[id]/ratings/route.ts";
 import { PATCH as updateEdition } from "../app/api/editions/[id]/route.ts";
 import { POST as login } from "../app/api/auth/login/route.ts";
+import { POST as createEdition } from "../app/api/editions/route.ts";
+import { GET as searchCatalog } from "../app/api/catalog/search/route.ts";
+import { GET as getMarketReference } from "../app/api/editions/[id]/market-reference/route.ts";
+import { USD_TO_KRW, USD_TO_KRW_BASE_DATE } from "../src/exchange-rate.ts";
 
 test("GET /api/listings returns filtered active listings", async () => {
   const response = await getListings(new Request("http://localhost/api/listings?format=CD"));
@@ -187,4 +191,120 @@ test("PATCH /api/listings/:id requires an admin session and replaces listing pho
   }), context);
   assert.equal(updated.status, 200);
   assert.deepEqual((await updated.json()).photos, ["photo-one"]);
+});
+
+async function sessionCookieFor(email: string) {
+  const response = await login(new Request("http://localhost/api/auth/login", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password: "vynl1234" })
+  }));
+  return response.headers.get("set-cookie") ?? "";
+}
+
+test("POST /api/editions requires an admin session and creates an edition", async () => {
+  const input = {
+    artist: "The Beatles", title: "Abbey Road", format: "LP", year: 1969, country: "UK", label: "Apple Records",
+    catalogNumber: "PCS 7088", barcode: "5099969945410", cover: "https://example.com/abbey.jpg", discogsReleaseId: 2523519
+  };
+  const post = (cookie: string, body: unknown) => createEdition(new Request("http://localhost/api/editions", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify(body)
+  }));
+
+  assert.equal((await post("", input)).status, 401);
+  assert.equal((await post(await sessionCookieFor("user@vynl.kr"), input)).status, 403);
+
+  const adminCookie = await sessionCookieFor("demo@vynl.kr");
+  const invalid = await post(adminCookie, { title: "제목만" });
+  assert.equal(invalid.status, 400);
+  assert.ok((await invalid.json()).fields.artist);
+
+  const created = await post(adminCookie, input);
+  assert.equal(created.status, 201);
+  const body = await created.json();
+  assert.match(body.id, /^edition-\d+$/);
+  assert.equal(body.discogsReleaseId, 2523519);
+
+  const duplicate = await post(adminCookie, input);
+  assert.equal(duplicate.status, 400);
+  assert.ok((await duplicate.json()).fields.discogsReleaseId);
+});
+
+test("GET /api/catalog/search requires an admin and proxies Discogs without exposing the token", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalToken = process.env.DISCOGS_TOKEN;
+  const calls: { url: string; headers: Record<string, string> }[] = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(input), headers: (init?.headers ?? {}) as Record<string, string> });
+    return Response.json({ results: [{ id: 7557957, title: "Kendrick Lamar - To Pimp A Butterfly", year: "2015", country: "US", format: ["Vinyl", "LP"], label: ["Top Dawg Entertainment"], catno: "B0023464-01", barcode: ["602547311009"], cover_image: "https://i.discogs.com/tpab.jpeg", uri: "/release/7557957" }] });
+  }) as typeof globalThis.fetch;
+
+  try {
+    const search = (cookie: string, query = "barcode=602547311009") => searchCatalog(new Request(`http://localhost/api/catalog/search?${query}`, { headers: { cookie } }));
+    process.env.DISCOGS_TOKEN = "test-token";
+
+    assert.equal((await search("")).status, 401);
+    assert.equal((await search(await sessionCookieFor("user@vynl.kr"))).status, 403);
+    const adminCookie = await sessionCookieFor("demo@vynl.kr");
+    assert.equal((await search(adminCookie, "")).status, 400);
+    assert.equal(calls.length, 0);
+
+    const response = await search(adminCookie);
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.equal(text.includes("test-token"), false);
+    const body = JSON.parse(text);
+    assert.equal(body.total, 1);
+    assert.equal(body.items[0].discogsReleaseId, 7557957);
+    assert.equal(body.items[0].format, "LP");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].headers.Authorization, "Discogs token=test-token");
+
+    delete process.env.DISCOGS_TOKEN;
+    assert.equal((await search(adminCookie)).status, 503);
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.DISCOGS_TOKEN;
+    else process.env.DISCOGS_TOKEN = originalToken;
+  }
+});
+
+test("GET /api/editions/:id/market-reference converts Discogs USD prices to KRW and fails softly", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalToken = process.env.DISCOGS_TOKEN;
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    calls.push(String(input));
+    return Response.json({ num_for_sale: 12, lowest_price: { value: 23.5, currency: "USD" }, blocked_from_sale: false });
+  }) as typeof globalThis.fetch;
+  const request = (id: string) => getMarketReference(new Request(`http://localhost/api/editions/${id}/market-reference`), { params: Promise.resolve({ id }) });
+
+  try {
+    process.env.DISCOGS_TOKEN = "test-token";
+    assert.equal((await request("missing")).status, 404);
+    assert.equal((await request("edition-1")).status, 404);
+    assert.equal(calls.length, 0);
+
+    const response = await request("edition-8");
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.numForSale, 12);
+    assert.deepEqual(body.lowestPrice, { amount: 23.5, currency: "USD", krw: Math.round(23.5 * USD_TO_KRW) });
+    assert.deepEqual(body.exchangeRate, { usdToKrw: USD_TO_KRW, baseDate: USD_TO_KRW_BASE_DATE });
+    assert.ok(calls[0].includes("/marketplace/stats/7557957"));
+
+    assert.equal((await request("edition-8")).status, 200);
+    assert.equal(calls.length, 1);
+
+    delete process.env.DISCOGS_TOKEN;
+    assert.equal((await request("edition-6")).status, 503);
+    assert.equal(calls.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.DISCOGS_TOKEN;
+    else process.env.DISCOGS_TOKEN = originalToken;
+  }
 });

@@ -4,8 +4,10 @@ import { notFound } from "next/navigation";
 import { authStore } from "../../../lib/auth-store-instance.ts";
 import { boardStore } from "../../../lib/board-store-instance.ts";
 import { SESSION_COOKIE } from "../../../src/auth-store.ts";
+import { CATALOG_SOURCE_NAME, catalogMarketUrl } from "../../../src/catalog-adapter.ts";
 import AdminEditionEditor from "./admin-edition-editor.tsx";
 import layoutStyles from "./listing-layout.module.css";
+import MarketReference from "./market-reference.tsx";
 import PhotoCarousel from "./photo-carousel.tsx";
 import PriceHistoryDialog from "./price-history-dialog.tsx";
 import RatingWidget from "./rating-widget.tsx";
@@ -70,6 +72,7 @@ export default async function ListingPage({ params }: ListingPageProps) {
             <p className="detail-price"><strong>{won.format(listing.price)}</strong> <small>+ 배송비 {won.format(listing.shippingFee)}</small></p>
             <RatingWidget editionId={listing.editionId} initialSummary={ratingSummary} />
             <PriceHistoryDialog history={history} currentPrice={listing.price} />
+            {listing.edition.discogsReleaseId && <MarketReference editionId={listing.editionId} sourceName={CATALOG_SOURCE_NAME} sourceUrl={catalogMarketUrl(listing.edition.discogsReleaseId)} />}
           </div>
         </section>
         <section className="detail-page-information" aria-label="판매 상품 정보">

@@ -20,6 +20,7 @@ export interface Edition {
   catalogNumber: string;
   barcode: string;
   cover: string;
+  discogsReleaseId?: number;
 }
 
 export interface Listing {
@@ -112,6 +113,10 @@ export interface UpdateEditionInput {
   catalogNumber?: unknown;
   barcode?: unknown;
   cover?: unknown;
+}
+
+export interface CreateEditionInput extends UpdateEditionInput {
+  discogsReleaseId?: unknown;
 }
 
 export interface UpdateListingInput {

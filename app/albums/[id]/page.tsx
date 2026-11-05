@@ -4,7 +4,9 @@ import { notFound } from "next/navigation";
 import { authStore } from "../../../lib/auth-store-instance.ts";
 import { boardStore } from "../../../lib/board-store-instance.ts";
 import { SESSION_COOKIE } from "../../../src/auth-store.ts";
+import { CATALOG_SOURCE_NAME, catalogMarketUrl } from "../../../src/catalog-adapter.ts";
 import AdminEditionEditor from "../../listings/[id]/admin-edition-editor.tsx";
+import MarketReference from "../../listings/[id]/market-reference.tsx";
 import RatingWidget from "../../listings/[id]/rating-widget.tsx";
 
 type AlbumPageProps = { params: Promise<{ id: string }> };
@@ -49,6 +51,7 @@ export default async function AlbumPage({ params }: AlbumPageProps) {
               <div><dt>BARCODE</dt><dd>{edition.barcode}</dd></div>
             </dl>
             <RatingWidget editionId={edition.id} initialSummary={rating} />
+            {edition.discogsReleaseId && <MarketReference editionId={edition.id} sourceName={CATALOG_SOURCE_NAME} sourceUrl={catalogMarketUrl(edition.discogsReleaseId)} />}
           </div>
         </article>
         <section className="album-market-panel" aria-labelledby="album-market-title">
